@@ -1,0 +1,24 @@
+.env
+
+# fisierele bazei de date vectoriale pt Second Brain 
+chroma_db/
+faiss_index/
+*.db
+*.sqlite
+*.sqlite3
+
+# mediul virtual si cache-ul de Python
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# fisiere generate de pytest si coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# setari de la editorul de cod si fisiere ascunse de OS
+.vscode/
+.idea/
+.DS_Store
