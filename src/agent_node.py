@@ -1,14 +1,13 @@
-import enum
 import os
 from dotenv import load_dotenv
-from typing import Dict, Any, Literal
+from typing import Literal
 from langchain_mistralai import ChatMistralAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.func import task as lg_task
+from pydantic import SecretStr
 from pydantic_core import ValidationError
 
-from src.contracts import AgentTask, AgentResult, Artifact
-from src.retriever import index_vault_notes, search_vault, load_playbook 
+from src.contracts import AgentTask, AgentResult
 
 load_dotenv()
 
@@ -20,14 +19,14 @@ def run_test_gen_agent(task: AgentTask) -> AgentResult:
     Limbajul tinta vine din task.context, pre populat de orchestrator, nu din input payload.
     """
 
-    index_vault_notes()
+   
 
-    api_key: str = result if (result := os.environ.get("MISTRAL_API_KEY")) is not None else ""
+    api_key: SecretStr = SecretStr(result if (result := os.environ.get("MISTRAL_API_KEY")) is not None else "")
     if not api_key:
         raise ValueError("lipseste MISTRAL_APIKEY in variabilele de mediu")
     
     try:
-        llm = ChatMistralAI(model="mistral-small-latest", api_key = api_key, temperature=0.2)
+        llm = ChatMistralAI(model_name="mistral-small-latest", api_key = api_key, temperature=0.2)
         structured_llm = llm.with_structured_output(AgentResult)
     except Exception as e:
         raise RuntimeError(f"{e}")
@@ -41,14 +40,9 @@ def run_test_gen_agent(task: AgentTask) -> AgentResult:
     module_name = payload.get("module_name", "modul necunoscut")
     criteria = payload.get("acceptance_criteria", [])
 
-    #RAG integration
-    relevant_notes = search_vault(module_name)
-    context_text = "\n\n".join([f"Nota [{note['vault_note_ref']}]:\n{note['content']}" for note in relevant_notes])
-
     system_prompt = getPrompt("system", {"language": language})
-    # call and implement getUserPrompt to generate the user prompt based on the task and context
-    # user_prompt
-                       
+    user_prompt = getPrompt("user", {"module_name": module_name, "criteria": criteria, "language": language, "context": context})
+
     messages = [
         SystemMessage(content=system_prompt),
         HumanMessage(content=user_prompt)
@@ -58,6 +52,10 @@ def run_test_gen_agent(task: AgentTask) -> AgentResult:
         result = structured_llm.invoke(messages)
     except ValidationError as e:
         raise RuntimeError(f"Validarea AgentResult a eșuat: {e}")
+
+    if not isinstance(result, AgentResult):
+        raise RuntimeError(f"Modelul nu a returnat un AgentResult valid. Tipul returnat: {type(result)}")
+    
     result = result.model_copy(update={"task_id": task.task_id, "agent_id": "S5"})
 
     return result
@@ -67,9 +65,7 @@ def getPrompt(type: Literal["system", "user"], options: dict) -> str:
         "system": getSystemPrompt,
         "user": getUserPrompt
     }
-
-    
-    return switch.get(type, getSystemPrompt(**options))(**options)
+    return switch.get(type, getSystemPrompt)(**options)
 
 def getSystemPrompt(language: str) -> str:
        return f"""
@@ -90,3 +86,11 @@ def getSystemPrompt(language: str) -> str:
         - evidence_class: "retrieved" (design bazat pe vault), NU "measured".
         - status: "success" dacă ai reușit, altfel "failed" sau "pending_approval".
         """
+
+
+def getUserPrompt(module_name: str, criteria: list[str], language: str, context: str) -> str:
+    return f"""
+    Genereaza teste in pytest pentru modulul '{module_name}' 
+    cu urmatoarele criterii de acceptare: {criteria}.
+    Reguli si capcane specifice extrase din Second Brain:\n{context}
+    """
