@@ -1,0 +1,26 @@
+{
+  "name": "Test generation crew",
+  "agents": ["analyst", "designer", "engineer"],
+  "tasks": [
+    {
+      "name": "analysis_task",
+      "description": "Analyze module '{module_name}' with criteria: {criteria}. Vault notes: {vault_notes}. Produce a test brief with criteria mapping and flagged gaps.",
+      "expected_output": "Structured test brief with criteria mapping and flagged gaps.",
+      "agent": "analyst",
+    },
+     {
+      "name": "design_task",
+      "description": "From the Analyst's brief, design a pytest test strategy for '{module_name}'. Assign test types and ac_index per criterion.",
+      "expected_output": "Test plan with type, description, and ac_index per test.",
+      "agent": "designer"
+    },
+    {
+      "name": "engineering_task",
+      "description": "Write complete pytest code following the Designer's plan. Use @pytest.mark decorators and # vault_ref comments on every test.",
+      "expected_output": "Complete, runnable pytest code with markers and vault_ref citations.",
+      "agent": "engineer"
+    }
+  ],
+  "process": "sequential",
+  "verbose": true
+}
