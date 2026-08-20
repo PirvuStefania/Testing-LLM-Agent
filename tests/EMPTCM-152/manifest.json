@@ -1,0 +1,12 @@
+{
+  "task_id": "smoke-001",
+  "ticket_key": "EMPTCM-152",
+  "module_name": "UserAuthService",
+  "criteria": [
+    "smoke: commit reaches GitHub"
+  ],
+  "model": "none (smoke)",
+  "test_file": "test_userauthservice.py",
+  "generated_by": "S5 test-generation agent",
+  "generated_at": "2026-08-20T10:22:25+00:00"
+}
