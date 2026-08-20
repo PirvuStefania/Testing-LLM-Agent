@@ -1,0 +1,12 @@
+{
+  "task_id": "smoke-001",
+  "ticket_key": "SMOKE-5",
+  "module_name": "PostCleanup",
+  "criteria": [
+    "smoke: commit reaches GitHub"
+  ],
+  "model": "none (smoke)",
+  "test_file": "test_postcleanup.py",
+  "generated_by": "S5 test-generation agent",
+  "generated_at": "2026-08-20T11:27:06+00:00"
+}
