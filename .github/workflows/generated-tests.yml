@@ -1,0 +1,193 @@
+# Runs the tests written by the S5 test-generation agent on every pull request
+# it opens. Install to .github/workflows/generated-tests.yml in the repository
+# S5 writes into (see agents/testing/ci/README.md).
+#
+# Generic on purpose: S5 can be pointed at any code repository (GITHUB_REPO),
+# so nothing here assumes a language, a layout or a base branch. What it does
+# assume is S5's own delivery contract:
+#
+#   * tests land under one prefix (S5_WRITE_ALLOWLIST, "tests/" by default) as
+#     <prefix>/<TICKET>/test_<module>.py plus a manifest.json next to them;
+#   * tests are always pytest, whatever language the module under test uses;
+#   * tests carry the categorization markers from
+#     agents/testing/app/src/profiles/taxonomy.jsonc.
+#
+# Per-repository knobs are repository variables (Settings > Secrets and
+# variables > Actions > Variables), all optional:
+#
+#   S5_TESTS_ROOT       where S5 writes; must match S5_WRITE_ALLOWLIST. Default "tests"
+#   S5_PYTHON_VERSION   interpreter for pytest. Default "3.11", the S5 image
+#   S5_SETUP_COMMAND    shell run before pytest, e.g. "docker compose up -d api"
+#                       for tests that reach an HTTP API or a database
+#   S5_PYTEST_ARGS      extra pytest arguments, e.g. '-m "not dbState"'
+#
+# Only the test directories the pull request touches are run: a ticket's PR is
+# judged on its own tests, not on an older ticket's failures. workflow_dispatch
+# runs everything under S5_TESTS_ROOT.
+#
+# The job is blocking by intent: a PR from an agent whose tests do not even
+# collect must not merge on green. Enforcing that needs branch protection with
+# this check marked required, which needs repository admin.
+name: S5 generated tests
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+concurrency:
+  group: s5-generated-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TESTS_ROOT: ${{ vars.S5_TESTS_ROOT || 'tests' }}
+  PYTHON_VERSION: ${{ vars.S5_PYTHON_VERSION || '3.11' }}
+
+jobs:
+  pytest:
+    name: Generated tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # On a pull request: the directories under TESTS_ROOT with .py changes.
+      # base.sha is the base branch tip the merge commit was built on, so the
+      # two-dot diff against HEAD is exactly what the PR adds.
+      - name: Pick the test directories to run
+        id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          root="${TESTS_ROOT%/}"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            dirs=$(git diff --name-only "$BASE_SHA" HEAD -- "$root/**/*.py" "$root/*.py" \
+                   | xargs -r -n1 dirname | sort -u | tr '\n' ' ')
+          else
+            dirs="$root"
+          fi
+          if [ -z "${dirs// }" ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No test files under $root/ changed in this pull request; nothing to run."
+            exit 0
+          fi
+          echo "run=true" >> "$GITHUB_OUTPUT"
+          echo "dirs=$dirs" >> "$GITHUB_OUTPUT"
+          echo "Running: $dirs"
+
+      - uses: actions/setup-python@v5
+        if: steps.scope.outputs.run == 'true'
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      # pytest + coverage mirror S5's own coverage runner. requests/httpx are the
+      # clients the httpApi boundary tests reach for. Anything the module under
+      # test needs comes from the repository's own requirements files, if any.
+      - name: Install
+        if: steps.scope.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install pytest coverage requests httpx
+          for req in requirements.txt requirements-dev.txt requirements-test.txt; do
+            [ -f "$req" ] && pip install -r "$req"
+          done
+          if [ -f pyproject.toml ] && grep -q '^\[project\]' pyproject.toml; then
+            pip install -e . || echo "::warning::pip install -e . failed; continuing with the repository on PYTHONPATH"
+          fi
+
+      - name: Per-repository setup
+        if: steps.scope.outputs.run == 'true' && vars.S5_SETUP_COMMAND != ''
+        run: ${{ vars.S5_SETUP_COMMAND }}
+
+      # Registers the S5 marker vocabulary as a pytest plugin loaded with -p, so
+      # the repository needs no pytest.ini for @pytest.mark.unitTest and friends.
+      # Keep in sync with agents/testing/app/src/profiles/taxonomy.jsonc and the
+      # boundary profiles.
+      - name: Register S5 markers
+        if: steps.scope.outputs.run == 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/s5_plugins"
+          cat > "$RUNNER_TEMP/s5_plugins/s5_markers.py" <<'PY'
+          MARKERS = {
+              "happyPath": "intent: expected behaviour on valid input",
+              "edgeCase": "intent: boundary values and unusual but valid input",
+              "errorPath": "intent: invalid input and failure handling",
+              "security": "intent: authentication, authorisation, injection",
+              "regression": "intent: a previously reported defect",
+              "unitTest": "level: one entity, in process",
+              "integrationTest": "level: several entities or an external boundary",
+              "e2e": "level: the whole flow from the outside",
+              "inProcess": "boundary: imports the module directly",
+              "httpApi": "boundary: reaches the module over HTTP",
+              "cli": "boundary: runs the module as a command",
+              "dbState": "boundary: asserts on database state",
+          }
+
+
+          def pytest_configure(config):
+              for name, description in MARKERS.items():
+                  config.addinivalue_line("markers", f"{name}: {description}")
+          PY
+
+      - name: Run pytest under coverage
+        if: steps.scope.outputs.run == 'true'
+        env:
+          DIRS: ${{ steps.scope.outputs.dirs }}
+          EXTRA_ARGS: ${{ vars.S5_PYTEST_ARGS }}
+        run: |
+          set -uo pipefail
+          mkdir -p reports
+          # Repository root (and src/, if present) on the path so inProcess
+          # tests can import the module under test the way S5's runner does.
+          export PYTHONPATH="$RUNNER_TEMP/s5_plugins:$PWD${PYTHONPATH:+:$PYTHONPATH}"
+          [ -d src ] && export PYTHONPATH="$PYTHONPATH:$PWD/src"
+          # shellcheck disable=SC2086
+          python -m coverage run -m pytest $DIRS \
+            -p no:cacheprovider -p s5_markers -rs \
+            --junitxml=reports/junit.xml $EXTRA_ARGS
+          status=$?
+          # Cobertura for whoever wants to feed it back into S5's evidence.
+          # `coverage xml` exits 1 when nothing measurable was imported (a
+          # smoke test asserting True); that is not a test failure.
+          python -m coverage xml -o reports/coverage.xml || true
+          exit $status
+
+      - name: Summarise the manifests
+        if: always() && steps.scope.outputs.run == 'true'
+        env:
+          DIRS: ${{ steps.scope.outputs.dirs }}
+        run: |
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json, os, pathlib
+          print("### S5 generated tests\n")
+          print("| directory | ticket | module | model | generated at |")
+          print("|---|---|---|---|---|")
+          for d in os.environ["DIRS"].split():
+              m = pathlib.Path(d) / "manifest.json"
+              info = json.loads(m.read_text()) if m.is_file() else {}
+              print(f"| `{d}` | {info.get('ticket_key') or '-'} | {info.get('module_name') or '-'} "
+                    f"| {info.get('model') or '-'} | {info.get('generated_at') or '-'} |")
+          PY
+
+      - name: Publish results on the pull request
+        if: always() && steps.scope.outputs.run == 'true'
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          files: reports/junit.xml
+          check_name: S5 generated tests
+          comment_mode: always
+
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.scope.outputs.run == 'true'
+        with:
+          name: s5-test-reports
+          path: reports/
+          if-no-files-found: warn
