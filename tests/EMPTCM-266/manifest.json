@@ -1,0 +1,12 @@
+{
+  "task_id": "smoke-001",
+  "ticket_key": "EMPTCM-266",
+  "module_name": "PipelineCheck",
+  "criteria": [
+    "smoke: commit reaches GitHub"
+  ],
+  "model": "none (smoke)",
+  "test_file": "test_pipelinecheck.py",
+  "generated_by": "S5 test-generation agent",
+  "generated_at": "2026-09-09T08:17:39+00:00"
+}
