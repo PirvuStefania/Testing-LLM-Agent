@@ -1,12 +1,10 @@
 {
-  "task_id": "smoke-001",
+  "task_id": "b825dc67-3a27-4017-97e5-14e3adaed6ae",
   "ticket_key": "EMPTCM-249",
-  "module_name": "SmokeService",
-  "criteria": [
-    "smoke: commit reaches the project repo through the backend"
-  ],
-  "model": "none (smoke)",
-  "test_file": "test_smokeservice.py",
+  "module_name": "FINDING-072 — Coverage path normalisation uses `lstrip(\"./\")`, eating every leading dot",
+  "criteria": [],
+  "model": "open-mistral-nemo",
+  "test_file": "test_normalisation.py",
   "generated_by": "S5 test-generation agent",
-  "generated_at": "2026-09-15T08:10:47+00:00"
+  "generated_at": "2026-09-15T08:42:29+00:00"
 }
