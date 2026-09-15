@@ -1,0 +1,10 @@
+{
+  "task_id": "2eb4a78d-0d5c-4bd7-9510-a93527789fe8",
+  "ticket_key": "EMPTCM-249",
+  "module_name": "FINDING-072 — Coverage path normalisation uses `lstrip(\"./\")`, eating every leading dot",
+  "criteria": [],
+  "model": "open-mistral-nemo",
+  "test_file": "test_normalisation.py",
+  "generated_by": "S5 test-generation agent",
+  "generated_at": "2026-09-15T13:19:14+00:00"
+}
